@@ -53,12 +53,29 @@ Puppet::Type.newtype(:parallel_package_generator) do
         # Ensure parallel packages are installed before the real package resources
         parallel_packages[:before] = package_resources.map(&:ref)
         # Ensure parallel packages are installed after anything the real package resources require
-        # FIXME: direct dependencies include "admissible classes" which cannot be used in a metaparam...
-        parallel_packages[:require] = package_resources.flat_map { |package| catalog.relationship_graph.direct_dependencies_of(package) }.compact.map(&:ref)
+        parallel_packages[:require] = dependencies_of(package_resources).map(&:ref).tap { |d| Puppet.debug "Dependencies for parallel packages set #{index}: #{d}" }
       end
     else
       Puppet.debug "Ignoring package set #{index} for '#{provider}' because it contains only a single package: #{packages}"
       nil
+    end
+  end
+
+  def dependencies_of(resources)
+    resources.flat_map do |resource|
+      catalog.relationship_graph.direct_dependencies_of(resource)
+    end.flat_map do |r|
+      fix_whit(r)
+    end.compact.uniq
+  end
+
+  # Direct dependencies include `Whit[Admissible_class[class name]]` and `Whit[Completed_class[class name]]`, which need fixing up
+  def fix_whit(resource)
+    if resource.type == :whit
+      Puppet.debug "Parallel_packages found dependency on #{resource.ref} which needs transforming"
+      dependencies_of([resource]).tap { |d| Puppet.debug "Parallel_packages converted dependency on whit #{resource.ref} to dependency on #{d.map(&:ref)}" }
+    else
+      resource
     end
   end
 end
